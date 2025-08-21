@@ -1,5 +1,9 @@
 <?php
-session_start();
+
+// Démarre la session seulement si pas déjà démarrée
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
 // Génération token CSRF
 function generate_csrf_token()

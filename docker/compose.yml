@@ -1,20 +1,26 @@
 services:
   plunie_web:
-    image: php:8.2-apache
+    build:
+      context: ../..
+      dockerfile: back/docker/Dockerfile
     container_name: plunie_web
     restart: unless-stopped
     ports:
       - '8080:80'
     volumes:
-      - ../../front:/var/www/html
-      - ../../back:/var/www/back
+      - ../../:/var/www
+      - ./apache.conf:/etc/apache2/sites-available/000-default.conf
+    env_file:
+      - .env
     environment:
-      - APACHE_DOCUMENT_ROOT=/var/www/html
+      - APACHE_DOCUMENT_ROOT=/var/www/front
     depends_on:
       - pluniedb
       - mailpit
     networks:
       - plunie_network
+    command: >
+      bash -c "a2enmod rewrite && apache2-foreground"
 
   # Base de données MariaDB
   pluniedb:
@@ -40,7 +46,7 @@ services:
     container_name: plunie_phpmyadmin
     restart: unless-stopped
     ports:
-      - '8085:80'
+      - '8081:80'
     environment:
       - PMA_HOST=pluniedb
       - PMA_PORT=${PMA_PORT}
@@ -55,8 +61,8 @@ services:
     container_name: plunie_mail
     restart: unless-stopped
     ports:
-      - ${MAILPIT_HTTP_PORT}:8035
-      - ${MAILPIT_SMTP_PORT}:1035
+      - ${MAILPIT_HTTP_PORT}:8025
+      - ${MAILPIT_SMTP_PORT}:1025
     networks:
       - plunie_network
 
