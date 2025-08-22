@@ -12,15 +12,12 @@ services:
       - ./apache.conf:/etc/apache2/sites-available/000-default.conf
     env_file:
       - .env
-    environment:
-      - APACHE_DOCUMENT_ROOT=/var/www/front
     depends_on:
       - pluniedb
       - mailpit
     networks:
       - plunie_network
-    command: >
-      bash -c "a2enmod rewrite && apache2-foreground"
+    
 
   # Base de données MariaDB
   pluniedb:

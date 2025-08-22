@@ -14,5 +14,6 @@ RUN echo "sendmail_path = /usr/sbin/ssmtp -t" >> /usr/local/etc/php/conf.d/mail.
 
 # Activer mod_rewrite
 RUN a2enmod rewrite
+RUN docker-php-ext-install pdo pdo_mysql
 
 CMD ["apache2-foreground"]
