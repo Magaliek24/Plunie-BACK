@@ -1,80 +1,119 @@
 <?php
 
-namespace App\Controllers;
+declare(strict_types=1);
 
-use App\Services\MailService;
+namespace App\controllers;
 
+use App\services\MailService;
 
-class ContactController
+final class ContactController
 {
-    public function sendMessage()
+    public function sendMessage(): void
     {
-        // Configuration pour Mailpit dans Docker
-        ini_set('SMTP', 'plunie_mail');
-        ini_set('smtp_port', '1025');
-
+        // Fonctions utilitaires
         require_once __DIR__ . '/../core/Security.php';
         require_once __DIR__ . '/../services/MailService.php';
 
-        // Debug - afficher les données reçues
-        error_log("POST data: " . print_r($_POST, true));
-
-        // Vérif CSRF
-        if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
-            die('Erreur de sécurité');
+        // --- CSRF ---
+        $token = (string)($_POST['csrf_token'] ?? $_POST['csrf'] ?? $_POST['token'] ?? '');
+        if (!verify_csrf_token($token)) {
+            http_response_code(400);
+            $this->respond(['ok' => false, 'error' => 'csrf_invalid']);
+            return;
         }
 
-        // Honeypot
-        if (!empty($_POST['website'])) {
-            header('Location: /back/public/contact_merci.php');
-            exit();
+        // --- Honeypot ---
+        if (trim((string)($_POST['website'] ?? $_POST['hp'] ?? '')) !== '') {
+            // On fait comme si c'était OK pour les bots
+            $this->respond(['ok' => true]);
+            return;
         }
 
-        // Validation & nettoyage
-        $prenom = escape(trim($_POST['prenom']));
-        $nom = escape(trim($_POST['nom']));
-        $email = validate_email($_POST['email']);
-        $message = escape(trim($_POST['message']));
-
-        if (!$email) {
-            die('Email invalide');
-        }
-
-        // Anti-flood
+        // --- Anti-flood ---
         if (!check_flood_protection(60)) {
-            die('Merci de patienter avant de renvoyer un message');
+            http_response_code(429);
+            $this->respond(['ok' => false, 'error' => 'rate_limited']);
+            return;
         }
         $_SESSION['last_submit'] = time();
 
-        // Préparer mail
-        $to = 'contact@plunie.fr';
-        $subject = 'Contact depuis le site Plunie';
-        $email_message = "Nouveau message du site Plunie:\n\n";
-        $email_message .= "Nom: $nom\n";
-        $email_message .= "Prénom: $prenom\n";
-        $email_message .= "Email: $email\n\n";
-        $email_message .= "Message:\n$message\n";
+        // --- Champs ---
+        $prenom   = trim((string)($_POST['prenom'] ?? ''));
+        $nom      = trim((string)($_POST['nom'] ?? ''));
+        $name     = trim((string)($_POST['name'] ?? ''));
+        $fullName = $name !== '' ? $name : trim($prenom . ' ' . $nom);
 
-        // Debug
-        error_log("Tentative d'envoi d'email à: $to");
+        $emailRaw = (string)($_POST['email'] ?? '');
+        $email    = validate_email($emailRaw); // renvoie string|false selon ton Security.php
+        $subject  = trim((string)($_POST['subject'] ?? ''));
+        $message  = trim((string)($_POST['message'] ?? ''));
 
-        // Envoi via service
-        try {
-            $mailService = new MailService();
-            if ($mailService->send($to, $subject, $email_message, $email)) {
-                $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http';
-                $host = $_SERVER['HTTP_HOST'];
-                $redirect_url = $protocol . '://' . $host . '/views/pages/contact_merci.php';
-
-                header('Location: ' . $redirect_url);
-                exit();
-            } else {
-                error_log("MailService->send a retourné false");
-                die("Erreur lors de l'envoi du message.");
-            }
-        } catch (\Exception $e) {
-            error_log("Exception dans MailService: " . $e->getMessage());
-            die("Erreur lors de l'envoi du message: " . $e->getMessage());
+        // --- Validation ---
+        $errors = [];
+        if ($fullName === '') {
+            $errors['name'] = 'Nom requis';
         }
+        if (!$email) {
+            $errors['email'] = 'Email invalide';
+        }
+        if ($message === '') {
+            $errors['message'] = 'Message requis';
+        }
+
+        if ($errors) {
+            http_response_code(422);
+            $this->respond(['ok' => false, 'errors' => $errors]);
+            return;
+        }
+
+        // --- Corps mail ---
+        $to = 'contact@plunie.fr';
+        if ($subject === '') {
+            $subject = 'Contact depuis le site Plunie';
+        }
+
+        $body  = "Nouveau message du site Plunie:\n\n";
+        $body .= "Nom complet: " . escape($fullName) . "\n";
+        $body .= "Email: "       . escape($email)     . "\n\n";
+        $body .= "Message:\n"    . escape($message)   . "\n";
+
+        // --- Envoi ---
+        try {
+            $mailer = new MailService(); // lit MAIL_HOST/MAIL_PORT depuis .env
+            $sent   = $mailer->send($to, $subject, $body, $email);
+            if (!$sent) {
+                throw new \RuntimeException('Envoi SMTP/mail() échoué');
+            }
+        } catch (\Throwable $e) {
+            error_log('Contact mail error: ' . $e->getMessage());
+            http_response_code(500);
+            $this->respond(['ok' => false, 'error' => 'mail_failed']);
+            return;
+        }
+
+        // --- Succès ---
+        $this->respond(['ok' => true, 'message' => 'Votre message a bien été envoyé.'], '/views/pages/contact_merci.php');
+    }
+
+    private function respond(array $payload, ?string $redirectOnHtml = null): void
+    {
+        $isAjax = strtolower((string)($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '')) === 'xmlhttprequest'
+            || str_contains((string)($_SERVER['HTTP_ACCEPT'] ?? ''), 'application/json');
+
+        if ($isAjax) {
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            return;
+        }
+
+        if (($payload['ok'] ?? false) && $redirectOnHtml) {
+            $proto = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
+            $host  = $_SERVER['HTTP_HOST'] ?? 'localhost';
+            header('Location: ' . $proto . '://' . $host . $redirectOnHtml);
+            return;
+        }
+
+        header('Content-Type: text/plain; charset=utf-8');
+        echo ($payload['ok'] ?? false) ? 'OK' : 'Erreur';
     }
 }
