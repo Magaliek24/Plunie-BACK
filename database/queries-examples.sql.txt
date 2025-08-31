@@ -1,0 +1,61 @@
+-- LISTE PRODUITS (avec stock total et note moyenne)
+SELECT 
+  p.id_produit,
+  p.nom,
+  p.prix,
+  COALESCE(SUM(CASE WHEN v.is_active = 1 THEN v.stock ELSE 0 END), 0) AS stock_total,
+  ROUND(AVG(CASE WHEN a.statut = 'approuve' THEN a.note END), 2)       AS note_moyenne,
+  COUNT(CASE WHEN a.statut = 'approuve' THEN 1 END)                    AS nb_avis
+FROM produits p
+LEFT JOIN variations_produits v ON v.id_produit = p.id_produit
+LEFT JOIN avis_produits a       ON a.id_produit = p.id_produit
+WHERE p.is_active = 1
+GROUP BY p.id_produit
+ORDER BY p.created_at DESC
+LIMIT :limit OFFSET :offset;
+
+-- DETAIL PRODUIT (images + variations)
+-- Produit
+SELECT id_produit, id_categorie, nom, slug, description_courte, description_longue,
+       prix, prix_promo, is_active, created_at, updated_at
+FROM produits
+WHERE id_produit = :id;
+
+-- Images (principale = ordre=1)
+SELECT image_url, alt_text, is_primary, ordre
+FROM images_produits
+WHERE id_produit = :id
+ORDER BY ordre ASC;
+
+-- Variantes + prix effectif (prix_variation sinon prix produit)
+SELECT v.id_variation,
+       v.taille, v.couleur, v.sku, v.stock, v.is_active,
+       COALESCE(v.prix_variation, p.prix) AS prix_effectif
+FROM variations_produits v
+JOIN produits p ON p.id_produit = v.id_produit
+WHERE v.id_produit = :id
+ORDER BY CAST(v.taille AS UNSIGNED), v.couleur;
+
+
+-- AVIS APPROUVES
+SELECT note, titre, commentaire, created_at
+FROM avis_produits
+WHERE id_produit = :id AND statut = 'approuve'
+ORDER BY created_at DESC
+LIMIT :limit OFFSET :offset;
+
+
+-- Recherche simple
+-- q = mot-clé ; on met 3 fois le même paramètre
+SELECT id_produit, nom, prix
+FROM produits
+WHERE is_active = 1
+  AND (
+    nom LIKE CONCAT('%', :q, '%')
+    OR description_courte LIKE CONCAT('%', :q, '%')
+    OR description_longue LIKE CONCAT('%', :q, '%')
+  )
+ORDER BY created_at DESC
+LIMIT 10 OFFSET 0;
+
+

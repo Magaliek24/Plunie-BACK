@@ -33,7 +33,7 @@ services:
       - MYSQL_PASSWORD=${MYSQL_PASSWORD}
     volumes:
       - plunie_db:/var/lib/mysql
-      - ../../database:/docker-entrypoint-initdb.d
+      - ../database:/docker-entrypoint-initdb.d
     networks:
       - plunie_network
 
