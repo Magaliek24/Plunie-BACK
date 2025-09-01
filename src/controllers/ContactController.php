@@ -97,8 +97,7 @@ final class ContactController
 
     private function respond(array $payload, ?string $redirectOnHtml = null): void
     {
-        $isAjax = strtolower((string)($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '')) === 'xmlhttprequest'
-            || str_contains((string)($_SERVER['HTTP_ACCEPT'] ?? ''), 'application/json');
+        $isAjax = strtolower((string)($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '')) === 'xmlhttprequest';
 
         if ($isAjax) {
             header('Content-Type: application/json; charset=utf-8');
@@ -109,7 +108,7 @@ final class ContactController
         if (($payload['ok'] ?? false) && $redirectOnHtml) {
             $proto = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
             $host  = $_SERVER['HTTP_HOST'] ?? 'localhost';
-            header('Location: ' . $proto . '://' . $host . $redirectOnHtml);
+            header('Location: ' . $proto . '://' . $host . $redirectOnHtml, true, 302);
             return;
         }
 
