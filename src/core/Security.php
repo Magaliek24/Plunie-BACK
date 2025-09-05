@@ -4,6 +4,17 @@ declare(strict_types=1);
 
 // Démarre la session seulement si pas déjà démarrée
 if (session_status() === PHP_SESSION_NONE) {
+    // Active "Secure" uniquement si la requête ACTUELLE est en HTTPS 
+    $https =
+        (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ||
+        (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https') ||
+        str_starts_with($_ENV['APP_URL'] ?? '', 'https://');
+
+    ini_set('session.cookie_httponly', '1');
+    ini_set('session.cookie_samesite', 'Lax');
+    ini_set('session.use_only_cookies', '1');
+    ini_set('session.cookie_secure', $https ? '1' : '0'); // <= ICI
+
     session_start();
 }
 
@@ -16,59 +27,91 @@ function generate_csrf_token(): string
     return $_SESSION['csrf_token'];
 }
 
-// Vérification CSRF en acceptant :
-// l’argument $token si fourni
-// sinon le header X-CSRF-Token
-// sinon $_POST['csrf_token']
-// sinon le body JSON { "csrf_token": "..." }
+// Vérification token CSRF
+// Priorité: Header X-CSRF-Token > $_POST['csrf_token'].
+// (JSON déjà injecté dans $_POST dans index.php)
 function verify_csrf_token(?string $token = null): bool
 {
-    // Si rien fourni, on va le chercher dans la requête
     if ($token === null || $token === '') {
-        // 1) Header prioritaire
-        if (!empty($_SERVER['HTTP_X_CSRF_TOKEN'])) {
-            $token = (string)$_SERVER['HTTP_X_CSRF_TOKEN'];
-        }
-        // 2) Form (x-www-form-urlencoded / multipart)
-        elseif (isset($_POST['csrf_token'])) {
-            $token = (string)$_POST['csrf_token'];
-        }
-        // 3) JSON
-        else {
-            $ct = $_SERVER['CONTENT_TYPE'] ?? '';
-            if (stripos($ct, 'application/json') !== false) {
-                $raw  = file_get_contents('php://input') ?: '';
-                $data = json_decode($raw, true);
-                if (is_array($data) && isset($data['csrf_token'])) {
-                    $token = (string)$data['csrf_token'];
-                }
-            }
-        }
+        $token = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($_POST['csrf_token'] ?? '');
     }
-
+    if (!is_string($token) || strlen($token) !== 64) {
+        return false;
+    }
     $sessionToken = $_SESSION['csrf_token'] ?? '';
-    return (is_string($token) && $token !== '' &&
-        is_string($sessionToken) && $sessionToken !== '' &&
-        hash_equals($sessionToken, $token));
+    return $sessionToken !== '' && hash_equals($sessionToken, $token);
 }
 
+
 // Protection XSS
-function escape($data)
+function escape($data): string
 {
-    return htmlspecialchars($data, ENT_QUOTES, 'UTF-8');
+    if ($data === null) return '';
+    if (is_array($data) || is_object($data)) {
+        $data = json_encode($data, JSON_UNESCAPED_UNICODE);
+    } else {
+        $data = (string)$data;
+    }
+    return htmlspecialchars($data, ENT_QUOTES | ENT_HTML5, 'UTF-8');
 }
 
 // Validation email
-function validate_email($email)
+function validate_email(string $email): bool
 {
-    return filter_var($email, FILTER_VALIDATE_EMAIL);
+    if (strlen($email) > 254) return false;
+    return filter_var($email, FILTER_VALIDATE_EMAIL) !== false;
 }
 
 // Anti-flood
-function check_flood_protection($seconds = 60)
+function check_flood_protection(int $seconds = 60, string $action = 'default'): bool
 {
-    if (isset($_SESSION['last_submit']) && time() - $_SESSION['last_submit'] < $seconds) {
-        return false;
-    }
+    $key = 'last_submit_' . $action;
+    if (isset($_SESSION[$key]) && time() - $_SESSION[$key] < $seconds) return false;
+    $_SESSION[$key] = time();
     return true;
+}
+
+function regenerate_session_id(): void
+{
+    if (session_status() === PHP_SESSION_ACTIVE) session_regenerate_id(true);
+}
+
+function validate_password(string $password): array
+{
+    $errors = [];
+    if (strlen($password) < 8) $errors[] = 'Le mot de passe doit contenir au moins 8 caractères';
+    if (!preg_match('/[A-Z]/', $password)) $errors[] = 'Le mot de passe doit contenir au moins une majuscule';
+    if (!preg_match('/[a-z]/', $password)) $errors[] = 'Le mot de passe doit contenir au moins une minuscule';
+    if (!preg_match('/[0-9]/', $password)) $errors[] = 'Le mot de passe doit contenir au moins un chiffre';
+    return $errors;
+}
+
+function sanitize_input(string $input, string $type = 'text'): string
+{
+    $input = trim($input);
+    return match ($type) {
+        'email'    => (string)filter_var($input, FILTER_SANITIZE_EMAIL),
+        'url'      => (string)filter_var($input, FILTER_SANITIZE_URL),
+        'int'      => (string)filter_var($input, FILTER_SANITIZE_NUMBER_INT),
+        'alphanum' => preg_replace('/[^a-zA-Z0-9]/', '', $input) ?? '',
+        default    => preg_replace('/[\x00-\x1F\x7F]/u', '', $input) ?? '',
+    };
+}
+
+// --- Helpers user ---
+function current_user_id(): ?int
+{
+    return isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
+}
+function current_user_role(): ?string
+{
+    return $_SESSION['user_role'] ?? 'client';
+}
+function is_admin(): bool
+{
+    return current_user_role() === 'admin';
+}
+function is_authenticated(): bool
+{
+    return current_user_id() !== null;
 }

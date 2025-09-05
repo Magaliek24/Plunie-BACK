@@ -15,9 +15,9 @@ final class Database
     {
         if (self::$pdo) return self::$pdo;
 
-        $host = $_ENV['DB_HOST'] ?? '127.0.0.1';
+        $host = env('DB_HOST', '127.0.0.1');
         $port = (int)($_ENV['DB_PORT'] ?? 3306);
-        $db   = $_ENV['DB_NAME'] ?? 'plunie';
+        $db   = $_ENV['DB_NAME'] ?? 'plunie_db';
         $user = $_ENV['DB_USER'] ?? 'root';
         $password = $_ENV['DB_PASS'] ?? ($_ENV['DB_PASSWORD'] ?? '');
         $charset = $_ENV['DB_CHARSET'] ?? 'utf8mb4';
@@ -31,8 +31,7 @@ final class Database
             ]);
             return self::$pdo;
         } catch (PDOException $e) {
-            http_response_code(500);
-            die('DB connection error: ' . htmlspecialchars($e->getMessage(), ENT_QUOTES));
+            throw new \RuntimeException('DB connection error', 0, $e);
         }
     }
 }

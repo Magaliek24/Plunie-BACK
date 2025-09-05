@@ -43,7 +43,7 @@ INSERT INTO images_produits (id_produit, image_url, alt_text, is_primary, ordre)
 
 -- 6) Utilisateurs (admin + 1 cliente)
 INSERT INTO utilisateurs (nom, prenom, email, password_hash, role) VALUES
-('Admin',  'Plunie', 'admin@plunie.fr',  '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'admin'),
+('Admin',  'Plunie', 'admin@plunie.fr',  '$2y$10$76sbdmpJNaeQV1FiM5gLiOsLlfqeMLWgIlQNysHKy/LcZ/wuUfg6y', 'admin'),
 ('Dubois', 'Marie',  'marie@exemple.fr', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'client');
 
 SET @u_marie := (SELECT id_utilisateur FROM utilisateurs WHERE email='marie@exemple.fr');

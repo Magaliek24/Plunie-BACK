@@ -2,6 +2,11 @@ RewriteEngine On
 RewriteBase /
 
 # Si le fichier n'existe pas, on route vers index.php
+
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
 RewriteRule ^ index.php [QSA,L]
+
+# Désactive l’indexation
+
+Options -Indexes

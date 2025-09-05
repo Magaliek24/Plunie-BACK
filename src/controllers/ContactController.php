@@ -10,32 +10,23 @@ final class ContactController
 {
     public function sendMessage(): void
     {
-        // Fonctions utilitaires
-        require_once __DIR__ . '/../core/Security.php';
-        require_once __DIR__ . '/../services/MailService.php';
-
         // --- CSRF ---
         $token = (string)($_POST['csrf_token'] ?? $_POST['csrf'] ?? $_POST['token'] ?? '');
-        if (!verify_csrf_token($token)) {
-            http_response_code(400);
-            $this->respond(['ok' => false, 'error' => 'csrf_invalid']);
-            return;
+        if (!function_exists('verify_csrf_token') || !verify_csrf_token($token)) {
+            $this->redirectFront('/views/pages/contact.php', ['error' => 'csrf']);
         }
 
         // --- Honeypot ---
         if (trim((string)($_POST['website'] ?? $_POST['hp'] ?? '')) !== '') {
-            // On fait comme si c'était OK pour les bots
-            $this->respond(['ok' => true]);
-            return;
+            // On fait comme si tout allait bien pour les bots
+            $this->redirectFront('/views/pages/contact_merci.php', ['sent' => 1]);
         }
 
         // --- Anti-flood ---
-        if (!check_flood_protection(60)) {
-            http_response_code(429);
-            $this->respond(['ok' => false, 'error' => 'rate_limited']);
-            return;
+        if (!function_exists('check_flood_protection') || !check_flood_protection(60, 'contact')) {
+            $this->redirectFront('/views/pages/contact.php', ['error' => 'rate']);
         }
-        $_SESSION['last_submit'] = time();
+
 
         // --- Champs ---
         $prenom   = trim((string)($_POST['prenom'] ?? ''));
@@ -44,75 +35,58 @@ final class ContactController
         $fullName = $name !== '' ? $name : trim($prenom . ' ' . $nom);
 
         $emailRaw = (string)($_POST['email'] ?? '');
-        $email    = validate_email($emailRaw); // renvoie string|false selon ton Security.php
+        // validate_email() renvoie bool → on garde la string séparément
+        if (!function_exists('validate_email') || !validate_email($emailRaw)) {
+            $this->redirectFront('/views/pages/contact.php', ['error' => 'email']);
+        }
+        $email = $emailRaw; // string validée
         $subject  = trim((string)($_POST['subject'] ?? ''));
         $message  = trim((string)($_POST['message'] ?? ''));
 
         // --- Validation ---
-        $errors = [];
-        if ($fullName === '') {
-            $errors['name'] = 'Nom requis';
-        }
-        if (!$email) {
-            $errors['email'] = 'Email invalide';
-        }
-        if ($message === '') {
-            $errors['message'] = 'Message requis';
+        if ($fullName === '' || $message === '') {
+            $this->redirectFront('/views/pages/contact.php', ['error' => 'validation']);
         }
 
-        if ($errors) {
-            http_response_code(422);
-            $this->respond(['ok' => false, 'errors' => $errors]);
-            return;
-        }
-
-        // --- Corps mail ---
-        $to = 'contact@plunie.fr';
         if ($subject === '') {
             $subject = 'Contact depuis le site Plunie';
         }
 
+        // --- Corps mail (on échappe au cas où c’est réinjecté en HTML quelque part) ------
         $body  = "Nouveau message du site Plunie:\n\n";
-        $body .= "Nom complet: " . escape($fullName) . "\n";
-        $body .= "Email: "       . escape($email)     . "\n\n";
-        $body .= "Message:\n"    . escape($message)   . "\n";
+        $body .= "Nom complet: " . (function_exists('escape') ? escape($fullName) : $fullName) . "\n";
+        $body .= "Email: "       . (function_exists('escape') ? escape($email)     : $email)     . "\n\n";
+        $body .= "Message:\n"    . (function_exists('escape') ? escape($message)   : $message)   . "\n";
 
         // --- Envoi ---
         try {
             $mailer = new MailService(); // lit MAIL_HOST/MAIL_PORT depuis .env
-            $sent   = $mailer->send($to, $subject, $body, $email);
+            $sent   = $mailer->send("contact@plunie.fr", $subject, $body, $email);
             if (!$sent) {
-                throw new \RuntimeException('Envoi SMTP/mail() échoué');
+                $this->redirectFront('/views/pages/contact.php', ['error' => 'mail']);
             }
         } catch (\Throwable $e) {
             error_log('Contact mail error: ' . $e->getMessage());
-            http_response_code(500);
-            $this->respond(['ok' => false, 'error' => 'mail_failed']);
-            return;
+            $this->redirectFront('/views/pages/contact.php', ['error' => 'server']);
         }
 
         // --- Succès ---
-        $this->respond(['ok' => true, 'message' => 'Votre message a bien été envoyé.'], '/views/pages/contact_merci.php');
+        $this->redirectFront('/views/pages/contact_merci.php', ['sent' => 1]);
     }
 
-    private function respond(array $payload, ?string $redirectOnHtml = null): void
+    /* ---------- helpers ---------- */
+
+    private function frontBase(): string
     {
-        $isAjax = strtolower((string)($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '')) === 'xmlhttprequest';
+        $base = rtrim($_ENV['FRONT_URL'] ?? 'http://localhost:8080', '/');
+        return $base;
+    }
 
-        if ($isAjax) {
-            header('Content-Type: application/json; charset=utf-8');
-            echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-            return;
-        }
-
-        if (($payload['ok'] ?? false) && $redirectOnHtml) {
-            $proto = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
-            $host  = $_SERVER['HTTP_HOST'] ?? 'localhost';
-            header('Location: ' . $proto . '://' . $host . $redirectOnHtml, true, 302);
-            return;
-        }
-
-        header('Content-Type: text/plain; charset=utf-8');
-        echo ($payload['ok'] ?? false) ? 'OK' : 'Erreur';
+    private function redirectFront(string $path, array $qs = [], int $status = 303): void
+    {
+        $url = $this->frontBase() . $path;
+        if ($qs) $url .= '?' . http_build_query($qs);
+        header('Location: ' . $url, true, $status);
+        exit;
     }
 }

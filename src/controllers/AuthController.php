@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\controllers;
 
+
 use App\core\Database;
 use PDO;
 
@@ -11,7 +12,6 @@ final class AuthController
 {
     public function register(): array
     {
-        require_once __DIR__ . '/../core/Security.php';
         $data = $this->readJson();
         $this->requireCsrf($data);
 
@@ -53,8 +53,10 @@ final class AuthController
         ]);
 
         $userId = (int)$pdo->lastInsertId();
+        regenerate_session_id();
         $_SESSION['user_id'] = $userId;
         $_SESSION['user_role'] = 'client';
+        generate_csrf_token(); // nouveau token lié à cette session
 
         return $this->resp(201, [
             'ok'   => true,
@@ -64,7 +66,6 @@ final class AuthController
 
     public function login(): array
     {
-        require_once __DIR__ . '/../core/Security.php';
         $data = $this->readJson();
         $this->requireCsrf($data);
 
@@ -82,6 +83,7 @@ final class AuthController
         $u = $st->fetch(PDO::FETCH_ASSOC);
 
         if (!$u || !password_verify($passRaw, $u['password_hash'])) {
+            sleep(1); // contre la force brute
             return $this->resp(401, ['ok' => false, 'error' => 'bad_credentials']);
         }
         if ((int)$u['is_active'] !== 1) {
@@ -89,8 +91,10 @@ final class AuthController
         }
 
         // OK: on connecte l’utilisateur
+        regenerate_session_id();
         $_SESSION['user_id']   = (int)$u['id_utilisateur'];
         $_SESSION['user_role'] = (string)$u['role'];
+        generate_csrf_token(); // nouveau token post-login
 
         // Fusion panier invité -> user
         $this->mergeGuestCart(Database::pdo(), (int)$u['id_utilisateur']);
@@ -139,13 +143,17 @@ final class AuthController
 
     public function logout(): array
     {
-        require_once __DIR__ . '/../core/Security.php';
         $data = $this->readJson();
         $this->requireCsrf($data);
 
         // On garde d’autres cookies (cart), on déconnecte seulement l’user
         unset($_SESSION['user_id'], $_SESSION['user_role']);
-        session_regenerate_id(true);
+
+        regenerate_session_id();
+
+        // nouveau CSRF pour la session anonyme
+        unset($_SESSION['csrf_token']);
+        generate_csrf_token();
 
         return $this->resp(200, ['ok' => true]);
     }
@@ -163,11 +171,9 @@ final class AuthController
     {
         $hdr = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
         $tok = (string)($data['csrf_token'] ?? $hdr);
+
         if (!function_exists('verify_csrf_token') || !verify_csrf_token($tok)) {
-            http_response_code(400);
-            header('Content-Type: application/json; charset=utf-8');
-            echo json_encode(['ok' => false, 'error' => 'csrf_invalid']);
-            exit;
+            json_response(['ok' => false, 'error' => 'csrf_invalid'], 400);
         }
     }
 
@@ -193,7 +199,13 @@ final class AuthController
             if ($guestCartId <= 0) {
                 $pdo->rollBack();
                 // On supprime quand même le cookie périmé
-                setcookie($cookieName, '', time() - 3600, '/');
+                setcookie('cart_token', '', [
+                    'expires'  => time() - 3600,
+                    'path'     => '/',
+                    'secure'   => env('APP_ENV', 'prod') === 'prod',
+                    'httponly' => true,
+                    'samesite' => 'Lax',
+                ]);
                 return;
             }
 
@@ -231,7 +243,13 @@ final class AuthController
             $pdo->commit();
 
             // Invalide le cookie invité (on travaille désormais en mode user)
-            setcookie($cookieName, '', time() - 3600, '/');
+            setcookie('cart_token', '', [
+                'expires'  => time() - 3600,
+                'path'     => '/',
+                'secure'   => env('APP_ENV', 'prod') === 'prod',
+                'httponly' => true,
+                'samesite' => 'Lax',
+            ]);
         } catch (\Throwable $e) {
             if ($pdo->inTransaction()) $pdo->rollBack();
             error_log('mergeGuestCart error: ' . $e->getMessage());

@@ -23,7 +23,6 @@ final class CartController
     /** Ajout d’un article {variation_id, qty} (JSON) */
     public function addItem(): array
     {
-        require_once __DIR__ . '/../core/Security.php';
         $body = $this->readJson();
         $this->requireCsrf($body);
 
@@ -58,7 +57,6 @@ final class CartController
     /** PATCH /api/cart/items/{variationId}  Body: {qty} (fixe la quantité, <=0 = suppression) */
     public function updateItem(int $variationId): array
     {
-        require_once __DIR__ . '/../core/Security.php';
         $body = $this->readJson();
         $this->requireCsrf($body);
 
@@ -86,7 +84,6 @@ final class CartController
     /** DELETE /api/cart/items/{variationId} */
     public function removeItem(int $variationId): array
     {
-        require_once __DIR__ . '/../core/Security.php';
         $body = $this->readJson(); // pour récupérer le csrf si tu veux l’envoyer en JSON
         $this->requireCsrf($body);
 
@@ -102,7 +99,6 @@ final class CartController
     /** DELETE /api/cart  (vider le panier) */
     public function clear(): array
     {
-        require_once __DIR__ . '/../core/Security.php';
         $body = $this->readJson();
         $this->requireCsrf($body);
 
@@ -129,10 +125,7 @@ final class CartController
         $hdr = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
         $tok = (string)($data['csrf_token'] ?? $hdr);
         if (!function_exists('verify_csrf_token') || !verify_csrf_token($tok)) {
-            http_response_code(400);
-            header('Content-Type: application/json; charset=utf-8');
-            echo json_encode(['ok' => false, 'error' => 'csrf_invalid']);
-            exit;
+            json_response(['ok' => false, 'error' => 'csrf_invalid'], 400);
         }
     }
 

@@ -142,10 +142,7 @@ final class AddressController
         $hdr = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
         $tok = (string)($data['csrf_token'] ?? $hdr);
         if (!function_exists('verify_csrf_token') || !verify_csrf_token($tok)) {
-            header('Content-Type: application/json; charset=utf-8');
-            http_response_code(400);
-            echo json_encode(['ok' => false, 'error' => 'csrf_invalid']);
-            exit;
+            json_response(['ok' => false, 'error' => 'csrf_invalid'], 400);
         }
     }
 

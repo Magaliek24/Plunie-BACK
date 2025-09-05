@@ -5,17 +5,13 @@ declare(strict_types=1);
 // bootstrap (autoload, dotenv, logs, helpers)
 require dirname(__DIR__) . '/bootstrap.php';
 
-\App\core\attributes\CorsMiddleWare::handle();
+use App\core\attributes\CorsMiddleWare;
 
-// Session (panier/auth)
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
+CorsMiddleWare::handle();
+
 
 // Génère un token CSRF si absent (dev & prod)
-if (empty($_SESSION['csrf_token'])) {
-    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-}
+generate_csrf_token();
 
 // Petits helpers locaux
 $DEBUG = filter_var($_ENV['APP_DEBUG'] ?? false, FILTER_VALIDATE_BOOL);
@@ -110,6 +106,24 @@ try {
             }
             break;
 
+        case 'GET /api/csrf':
+            // renvoie le token courant (et en crée un s’il n’existe pas encore)
+            $token = generate_csrf_token();
+
+            header('X-CSRF-Token: ' . $token);
+            header('Cache-Control: no-store');
+
+            json_response([
+                'ok' => true,
+                'csrf' => $token,
+                // aides debug "légères" (pas besoin d'APP_DEBUG ici)
+                'session_id' => session_id(),
+                'csrf_preview' => substr($token, 0, 12) . '…',
+                'has_cookie' => isset($_COOKIE['PHPSESSID']),
+            ]);
+            break;
+
+
 
         // ---- Catalogue simple ----
         case 'GET /api/categories':
@@ -179,6 +193,20 @@ try {
             json_response($res['body'] ?? [], $res['status'] ?? 201);
             break;
 
+        // ---- Commandes ----
+        case 'POST /api/orders/checkout':
+            $ctl = new \App\controllers\OrderController();
+            $res = $ctl->checkout();
+            json_response($res['body'] ?? [], $res['status'] ?? 200);
+            break;
+
+        case 'GET /api/orders':
+            $ctl = new \App\controllers\OrderController();
+            $res = $ctl->listMine();
+            json_response($res['body'] ?? [], $res['status'] ?? 200);
+            break;
+
+
         // Debug
         case 'GET /debug/csrf':
             if (!$DEBUG) {
@@ -220,6 +248,7 @@ try {
             json_response([
                 'session_id'   => session_id(),
                 'user_id'      => $_SESSION['user_id'] ?? null,
+                'user_role'         => $_SESSION['user_role'] ?? null,
                 'csrf_preview' => isset($_SESSION['csrf_token']) ? substr($_SESSION['csrf_token'], 0, 12) . '…' : null,
                 'has_cookie'   => isset($_COOKIE['PHPSESSID']),
             ]);
@@ -248,7 +277,6 @@ try {
                 json_response(['ok' => false, 'error' => $e->getMessage()], 500);
             }
             break;
-
 
 
         // 404
@@ -289,6 +317,54 @@ try {
             // DELETE /api/addresses/{id}
             if ($method === 'DELETE' && preg_match('#^/api/addresses/(\d+)$#', $uri, $m)) {
                 $ctl = new \App\controllers\AddressController();
+                $res = $ctl->delete((int)$m[1]);
+                json_response($res['body'] ?? [], $res['status'] ?? 200);
+                break;
+            }
+
+            // GET /api/products/{id}/reviews
+            if ($method === 'GET' && preg_match('#^/api/products/(\d+)/reviews$#', $uri, $m)) {
+                $ctl = new \App\controllers\ReviewController();
+                $res = $ctl->listForProduct((int)$m[1]);
+                json_response($res['body'] ?? [], $res['status'] ?? 200);
+                break;
+            }
+
+            // POST /api/products/{id}/reviews
+            if ($method === 'POST' && preg_match('#^/api/products/(\d+)/reviews$#', $uri, $m)) {
+                $ctl = new \App\controllers\ReviewController();
+                $res = $ctl->create((int)$m[1]);
+                json_response($res['body'] ?? [], $res['status'] ?? 201);
+                break;
+            }
+
+            // GET /api/orders/{id}  |  POST /api/orders/{id}/pay
+            if (preg_match('#^/api/orders/(\d+)(/pay)?$#', $uri, $m)) {
+                $ctl = new \App\controllers\OrderController();
+                $orderId = (int)$m[1];
+                if ($method === 'GET' && empty($m[2])) {
+                    $res = $ctl->show($orderId);
+                    json_response($res['body'] ?? [], $res['status'] ?? 200);
+                    break;
+                }
+                if ($method === 'POST' && $m[2] === '/pay') {
+                    $res = $ctl->payMock($orderId);
+                    json_response($res['body'] ?? [], $res['status'] ?? 200);
+                    break;
+                }
+            }
+
+            // PATCH /api/reviews/{id}
+            if ($method === 'PATCH' && preg_match('#^/api/reviews/(\d+)$#', $uri, $m)) {
+                $ctl = new \App\controllers\ReviewController();
+                $res = $ctl->moderate((int)$m[1]);
+                json_response($res['body'] ?? [], $res['status'] ?? 200);
+                break;
+            }
+
+            // DELETE /api/reviews/{id}
+            if ($method === 'DELETE' && preg_match('#^/api/reviews/(\d+)$#', $uri, $m)) {
+                $ctl = new \App\controllers\ReviewController();
                 $res = $ctl->delete((int)$m[1]);
                 json_response($res['body'] ?? [], $res['status'] ?? 200);
                 break;
